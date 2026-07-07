@@ -93,18 +93,30 @@ class A2uiValidatorWrapperV10:
         s2c = catalog.s2c_schema
         common = catalog.common_types_schema
         cat = catalog.catalog_schema
+        if not isinstance(s2c, dict) or "$id" not in s2c:
+            raise A2uiCatalogError(
+                "Server-to-client schema must be a dictionary containing an '$id' key."
+            )
 
         resources = []
-        for schema in [s2c, common]:
-            if schema and "$id" in schema:
-                resources.append((schema["$id"], Resource.from_contents(schema)))
+        for schema, filename in [
+            (s2c, "server_to_client.json"),
+            (common, "common_types.json"),
+        ]:
+            if schema is not None:
+                resources.append((filename, Resource.from_contents(schema)))
+                if isinstance(schema, dict) and "$id" in schema:
+                    resources.append((schema["$id"], Resource.from_contents(schema)))
 
-        if cat and "$id" in cat:
-            resources.append((cat["$id"], Resource.from_contents(cat)))
-            s2c_id = s2c.get("$id", "") if s2c else ""
-            if s2c_id:
-                resolved_catalog_uri = urljoin(s2c_id, "catalog.json")
-                resources.append((resolved_catalog_uri, Resource.from_contents(cat)))
+        if isinstance(cat, dict):
+            resources.append(("catalog.json", Resource.from_contents(cat)))
+            cat_copy = dict(cat)
+            s2c_id = s2c["$id"]
+            resolved_catalog_uri = urljoin(s2c_id, "catalog.json")
+            cat_copy["$id"] = resolved_catalog_uri
+            resources.append((resolved_catalog_uri, Resource.from_contents(cat_copy)))
+            if "$id" in cat:
+                resources.append((cat["$id"], Resource.from_contents(cat)))
 
         self._registry = Registry().with_resources(resources)
         self._wrapped_schema = {
@@ -192,11 +204,15 @@ class A2uiValidatorWrapperV10:
                 self._catalog.common_types_schema,
             ).extract_ref_fields()
 
+            allow_missing_root = config.allow_missing_root or not any(
+                isinstance(m, dict) and "createSurface" in m for m in messages
+            )
+
             validate_component_integrity(
                 all_components,
                 ref_fields,
                 allow_dangling_references=config.allow_dangling_references,
-                allow_missing_root=config.allow_missing_root,
+                allow_missing_root=allow_missing_root,
             )
 
             validate_recursion_and_paths(messages)
